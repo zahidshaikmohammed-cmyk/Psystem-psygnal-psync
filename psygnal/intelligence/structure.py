@@ -73,7 +73,7 @@ def find_swings(df: pd.DataFrame, lookback: int = config.SWING_LOOKBACK) -> tupl
     return swing_highs, swing_lows
 
 
-def _classify_trend_structure(swing_highs: list[SwingPoint], swing_lows: list[SwingPoint]) -> str:
+def classify_trend_structure(swing_highs: list[SwingPoint], swing_lows: list[SwingPoint]) -> str:
     if len(swing_highs) < 2 or len(swing_lows) < 2:
         return "UNDEFINED"
     hh = swing_highs[-1].price > swing_highs[-2].price
@@ -166,7 +166,7 @@ def analyze_structure(df: pd.DataFrame, timeframe: str) -> StructureState:
         )
 
     swing_highs, swing_lows = find_swings(df)
-    trend_structure = _classify_trend_structure(swing_highs, swing_lows)
+    trend_structure = classify_trend_structure(swing_highs, swing_lows)
     bos, choch = _detect_bos_choch(df, swing_highs, swing_lows, trend_structure)
     reclaim, failure = _detect_reclaim_and_failure(df, swing_highs, swing_lows)
 
