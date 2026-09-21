@@ -23,11 +23,16 @@ from psygnal.forecasting.features import build_feature_frame
 from psygnal.forecasting.registry import load_score_weights
 from psygnal.intelligence.context import attach_cross_market, build_symbol_intelligence
 from psygnal.intelligence.cross_market import analyze_cross_market
+from psygnal.intelligence.cross_market_confirmation import classify_cross_market_confirmation
 from psygnal.intelligence.gold import analyze_gold
+from psygnal.intelligence.reasoning import build_hypothesis
 from psygnal.intelligence.regime import classify_regime
+from psygnal.intelligence.shock import detect_shock
 from psygnal.macro.calendar import get_macro_state
-from psygnal.models import DataQuality, DataStatus, FinalSignal
+from psygnal.macro.event_engine import EventContext, get_event_context
+from psygnal.models import DataQuality, DataStatus, EventPhase, FinalSignal
 from psygnal.news.aggregator import get_news_state
+from psygnal.news.interpretation import interpret_news
 from psygnal.signal.confidence import compute_confidence
 from psygnal.signal.direction import select_direction
 from psygnal.signal.entry import compute_entry
@@ -58,6 +63,13 @@ def _safe_news_state(enabled: bool) -> dict[str, Any]:
         return get_news_state(enabled=enabled)
     except Exception as exc:  # news is optional context; it must never crash the engine
         return {"status": "UNAVAILABLE", "article_count": 0, "dominant_themes": [], "fetch_error": f"{type(exc).__name__}: {exc}"}
+
+
+def _safe_event_context(now_utc: datetime, enabled: bool) -> EventContext:
+    try:
+        return get_event_context(now_utc, enabled=enabled)
+    except Exception:  # event risk is optional context; it must never crash the engine
+        return EventContext(phase=EventPhase.NONE.value, nearest_event=None, proximity_bucket=None)
 
 
 def run_engine(
@@ -131,6 +143,8 @@ def run_engine(
 
     macro_state = _safe_macro_state(now_utc, cfg.enable_macro)
     news_state = _safe_news_state(cfg.enable_news)
+    event_context = _safe_event_context(now_utc, cfg.enable_macro)
+    news_interpretation = interpret_news(news_state)
 
     results: list[tuple[FinalSignal, dict[str, Any]]] = []
 
@@ -144,7 +158,11 @@ def run_engine(
             )
         intel_full = attach_cross_market(intel, cross_market_state, gold_state)
 
-        regime = classify_regime(intel_full, macro_state)
+        shock_state = detect_shock(
+            intel_full["m5_features"], intel_full["volume"].relative_volume, intel_full["volatility"].atr_value
+        )
+
+        regime = classify_regime(intel_full, macro_state, shock_state=shock_state, event_context=event_context)
 
         deterministic = compute_deterministic_probabilities(sym, intel_full, cross_market_state, gold_state)
 
@@ -220,6 +238,32 @@ def run_engine(
             historical_mfe_atr=historical_mfe_atr,
         )
         rr = compute_rr(entry_plan.entry, stop_plan.stop_loss, target_plan.tp1)
+
+        m5_structure = intel_full["structures"]["M5"]
+        liquidity_sweep_recent = any(e.get("recent") for e in liquidity_state.sweep_events)
+        breakout_or_bos_active = price_action_state.label == "breakout" or m5_structure.last_bos is not None
+        cross_market_confirmation = classify_cross_market_confirmation(
+            symbol_direction_sign=1 if direction == "LONG" else -1,
+            cross_market_state=cross_market_state,
+            gold_state=gold_state,
+            event_context=event_context,
+            news_interpretation=news_interpretation,
+            shock_is_shock=shock_state.is_shock,
+            liquidity_sweep_recent=liquidity_sweep_recent,
+            breakout_or_bos_active=breakout_or_bos_active,
+        )
+
+        hypothesis = build_hypothesis(
+            sym,
+            direction,
+            intel_full,
+            cross_market_state,
+            gold_state,
+            cross_market_confirmation,
+            event_context,
+            regime.label,
+            rr,
+        )
 
         quality = validated[sym][1]
 
@@ -324,6 +368,14 @@ def run_engine(
             conflicts=conflicts,
             warnings=warnings,
             data_quality=quality.as_dict(),
+            event_risk=event_context.as_dict(),
+            shock_state=shock_state.as_dict(),
+            cross_market_confirmation=cross_market_confirmation.as_dict(),
+            confirming_evidence=[f"[{e.weight}] {e.text}" for e in hypothesis.confirming_evidence],
+            contradicting_evidence=[f"[{e.weight}] {e.text}" for e in hypothesis.contradicting_evidence],
+            invalidation_conditions=hypothesis.invalidation_conditions,
+            tradeability=hypothesis.tradeability,
+            tradeability_reasons=hypothesis.tradeability_reasons,
         )
         results.append((signal, intel_full))
 
@@ -333,5 +385,6 @@ def run_engine(
         "unavailable": unavailable,
         "macro_state": macro_state,
         "news_state": news_state,
+        "event_risk": event_context.as_dict(),
         "now_utc": now_utc,
     }

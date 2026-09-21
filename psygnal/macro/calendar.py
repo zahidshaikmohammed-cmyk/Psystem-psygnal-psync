@@ -50,6 +50,7 @@ class MacroEvent:
     impact: str
     forecast: Optional[str]
     previous: Optional[str]
+    actual: Optional[str] = None
 
     def is_high_impact(self) -> bool:
         if self.impact.strip().lower() == "high":
@@ -79,6 +80,9 @@ def parse_calendar_events(raw: Any) -> list[MacroEvent]:
         impact = str(item.get("impact") or item.get("Impact") or "")
         forecast = item.get("forecast") or item.get("Forecast")
         previous = item.get("previous") or item.get("Previous")
+        # "actual" is only ever populated by the source AFTER the release
+        # has genuinely occurred — never fabricated here if absent.
+        actual = item.get("actual") or item.get("Actual")
         raw_time = item.get("date") or item.get("Date") or item.get("timestamp")
         time_utc = coerce_time(raw_time)
         events.append(
@@ -89,6 +93,7 @@ def parse_calendar_events(raw: Any) -> list[MacroEvent]:
                 impact=impact,
                 forecast=str(forecast) if forecast is not None else None,
                 previous=str(previous) if previous is not None else None,
+                actual=str(actual) if actual is not None else None,
             )
         )
     return events

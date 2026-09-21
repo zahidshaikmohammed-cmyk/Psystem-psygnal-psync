@@ -165,6 +165,12 @@ PATTERN_MEMORY_K_NEIGHBORS = 25
 
 MODEL_DIR = Path(__file__).resolve().parent.parent / "data" / "models"
 
+# ---------------------------------------------------------------------------
+# Daily market memory
+# ---------------------------------------------------------------------------
+
+DAILY_MEMORY_DIR = Path(__file__).resolve().parent.parent / "data" / "daily"
+
 
 @dataclass(frozen=True)
 class EngineConfig:

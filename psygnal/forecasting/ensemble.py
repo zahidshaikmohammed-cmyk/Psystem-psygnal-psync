@@ -84,7 +84,13 @@ def _price_action_component(price_action: Any) -> float:
     return 0.0
 
 
-def _cross_market_component(symbol: str, cross_market_state: dict[str, Any], gold_state: Optional[dict[str, Any]]) -> float:
+def cross_market_component(symbol: str, cross_market_state: dict[str, Any], gold_state: Optional[dict[str, Any]]) -> float:
+    """The symbol's directional bias implied by USD composite direction
+    (or, for Gold/Silver, the inverse). Public because
+    `intelligence/contradiction.py` reuses this exact mapping for its
+    "is USD actually moving against the hypothesis" check — the sign
+    convention must never be duplicated/diverge between the two call
+    sites."""
     usd_state = cross_market_state.get("usd_composite", {})
     usd_label = usd_state.get("state")
     usd_dir = {"STRENGTHENING": 1.0, "WEAKENING": -1.0}.get(usd_label, 0.0)
@@ -109,14 +115,14 @@ def compute_deterministic_probabilities(
     momentum_component = symbol_intel["momentum"].momentum_score
     structure_liquidity_component = _structure_liquidity_component(symbol_intel["structures"], symbol_intel["liquidity"])
     price_action_component = _price_action_component(symbol_intel["price_action"])
-    cross_market_component = _cross_market_component(symbol, cross_market_state, gold_state)
+    cross_market_component_value = cross_market_component(symbol, cross_market_state, gold_state)
 
     components = {
         "trend": trend_component,
         "momentum": momentum_component,
         "structure_liquidity": structure_liquidity_component,
         "price_action": price_action_component,
-        "cross_market": cross_market_component,
+        "cross_market": cross_market_component_value,
     }
     composite = sum(components[k] * DIRECTIONAL_WEIGHTS[k] for k in DIRECTIONAL_WEIGHTS)
     composite = float(np.clip(composite, -1.0, 1.0))

@@ -17,6 +17,8 @@ from psygnal.data.live_client import fetch_live_m5
 from psygnal.data.parser import describe_schema
 from psygnal.forecasting.registry import load_available_models
 from psygnal.main import run_engine
+from psygnal.memory.daily import load_daily_memory, save_daily_memory, update_daily_memory_for_symbol
+from psygnal.reporting.daily_brief import format_daily_brief
 from psygnal.reporting.json import build_json_output, default_output_path, write_json_output
 from psygnal.reporting.terminal import (
     format_data_unavailable,
@@ -38,6 +40,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--json-only", action="store_true", help="Print JSON to stdout instead of the terminal report")
     parser.add_argument("--output-dir", type=str, default=str(config.CACHE_DIR.parent / "output"), help="Directory for the JSON output file")
     parser.add_argument("--train", action="store_true", help="Train a model instead of running live (see: python -m psygnal.train --help)")
+    parser.add_argument("--daily-brief", action="store_true", help="Print today's daily market brief (from data/daily/) after the report")
     return parser
 
 
@@ -109,6 +112,26 @@ def main(argv: list[str] | None = None) -> int:
     signals = [s for s, _ in outcome["results"]]
     intel_map = {s.symbol: intel for s, intel in outcome["results"]}
 
+    daily_memory = load_daily_memory(now_utc)
+    for signal in signals:
+        forecast_record = {
+            "time": signal.timestamp.isoformat(),
+            "direction": signal.direction,
+            "regime": signal.market_regime,
+            "tradeability": signal.tradeability,
+            "signal_score": signal.signal_score,
+        }
+        update_daily_memory_for_symbol(
+            daily_memory,
+            signal.symbol,
+            now_utc,
+            signal.market_regime,
+            forecast_record,
+            session_summary=signal.session_state,
+            recent_sweep_events=[e for e in signal.liquidity_state.get("sweep_events", []) if e.get("recent")],
+        )
+    save_daily_memory(daily_memory, now_utc)
+
     output = build_json_output(signals, outcome["unavailable"], now_utc)
 
     output_dir = Path(args.output_dir)
@@ -132,6 +155,11 @@ def main(argv: list[str] | None = None) -> int:
     print()
     print(format_market_summary(signals))
     print(f"\nJSON output written to: {json_path}")
+
+    if args.daily_brief:
+        print()
+        print(format_daily_brief(daily_memory))
+
     return 0
 
 

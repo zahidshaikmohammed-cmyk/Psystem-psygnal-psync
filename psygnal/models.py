@@ -153,13 +153,70 @@ class RegimeLabel(str, Enum):
     TREND_DOWN = "TREND_DOWN"
     RANGE = "RANGE"
     BREAKOUT = "BREAKOUT"
+    BREAKDOWN = "BREAKDOWN"
     BREAKOUT_RETEST = "BREAKOUT_RETEST"
     LIQUIDITY_SWEEP = "LIQUIDITY_SWEEP"
     REVERSAL = "REVERSAL"
     VOLATILITY_EXPANSION = "VOLATILITY_EXPANSION"
     VOLATILITY_CONTRACTION = "VOLATILITY_CONTRACTION"
     NEWS_SHOCK = "NEWS_SHOCK"
+    POST_NEWS = "POST_NEWS"
+    TRANSITION = "TRANSITION"
     CHAOTIC = "CHAOTIC"
+
+
+class EventPhase(str, Enum):
+    """Where "now" sits relative to the nearest high-impact economic event.
+    Governs what information the engine is honestly allowed to use — see
+    macro/event_engine.py."""
+
+    NONE = "NONE"  # no high-impact event nearby
+    PRE_EVENT = "PRE_EVENT"  # approaching, not yet released
+    AT_EVENT = "AT_EVENT"  # within the immediate release window
+    POST_EVENT = "POST_EVENT"  # released, reaction window still active
+
+
+class DataProvenance(str, Enum):
+    """Distinguishes what the engine actually knows from what it infers or
+    lacks, per the constitution's data-honesty requirement. Attached to
+    individual macro-event fields (actual/forecast/previous)."""
+
+    VERIFIED = "VERIFIED"  # observed directly from a primary/aggregator source
+    DERIVED = "DERIVED"  # computed by this engine from verified inputs
+    UNAVAILABLE = "UNAVAILABLE"  # source unreachable or field absent
+
+
+class CrossMarketConfirmation(str, Enum):
+    """What kind of evidence is actually behind the current move — see
+    intelligence/cross_market_confirmation.py."""
+
+    MACRO_DRIVEN = "MACRO_DRIVEN"
+    CROSS_ASSET_CONFIRMED = "CROSS_ASSET_CONFIRMED"
+    TECHNICAL = "TECHNICAL"
+    LIQUIDITY_DRIVEN = "LIQUIDITY_DRIVEN"
+    NEWS_SHOCK = "NEWS_SHOCK"
+    MIXED = "MIXED"
+    UNCLEAR = "UNCLEAR"
+
+
+class Tradeability(str, Enum):
+    """Whether the engine believes acting on its own directional hypothesis
+    is actually warranted right now. See intelligence/reasoning.py.
+
+    NOTE ON PROJECT HISTORY: an earlier phase of this project mandated
+    "always LONG or SHORT, never WAIT" as a locked rule. The V3 mission
+    brief explicitly and repeatedly supersedes that for this exact
+    concept ("Create a first-class NO_TRADE state... Do not force a trade
+    every hour"). Direction computation itself (signal/direction.py) is
+    unchanged and still always resolves LONG or SHORT as the standing
+    directional hypothesis; `Tradeability` is a new, separate axis layered
+    on top that says whether acting on that hypothesis is warranted. See
+    the top-level implementation report for the full rationale.
+    """
+
+    TRADEABLE = "TRADEABLE"
+    WAIT = "WAIT"
+    NOT_TRADEABLE = "NOT_TRADEABLE"
 
 
 # ---------------------------------------------------------------------------
@@ -238,6 +295,16 @@ class FinalSignal:
     warnings: list[str]
 
     data_quality: dict[str, Any]
+
+    # --- V3: human-like reasoning layer ---
+    event_risk: dict[str, Any]  # macro/event_engine.py EventContext
+    shock_state: dict[str, Any]  # intelligence/shock.py ShockState
+    cross_market_confirmation: dict[str, Any]  # CrossMarketConfirmation + evidence
+    confirming_evidence: list[str]
+    contradicting_evidence: list[str]
+    invalidation_conditions: list[str]
+    tradeability: str  # Tradeability enum value
+    tradeability_reasons: list[str]
 
     def as_dict(self) -> dict[str, Any]:
         d = asdict(self)
