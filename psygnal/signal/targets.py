@@ -31,7 +31,15 @@ def compute_targets(
 ) -> TargetPlan:
     atr_value = atr_value if atr_value and atr_value > 0 else entry * 0.001
     zones = liquidity_state.zones_above if direction == "LONG" else liquidity_state.zones_below
-    zones_sorted = sorted(zones, key=lambda z: abs(z.price - entry))
+    deduped: list = []
+    seen_prices: set[float] = set()
+    for z in sorted(zones, key=lambda z: abs(z.price - entry)):
+        rounded = round(z.price, 6)
+        if rounded in seen_prices:
+            continue
+        seen_prices.add(rounded)
+        deduped.append(z)
+    zones_sorted = deduped
 
     if len(zones_sorted) >= 1:
         tp1 = zones_sorted[0].price
