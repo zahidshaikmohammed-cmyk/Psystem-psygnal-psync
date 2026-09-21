@@ -1,15 +1,31 @@
 """Adaptive parser for the live M5 endpoint payload.
 
-IMPORTANT — SCHEMA ASSUMPTION DISCLOSURE
------------------------------------------
+SCHEMA STATUS
+-------------
 `config.LIVE_M5_ENDPOINT` (http://140.245.226.102:8080/public/m5-live.json)
-was NOT reachable from the sandboxed environment this engine was built in
-(plain HTTP, non-443 port, raw IP — blocked by the build sandbox's egress
-policy). No real response body was ever inspected while writing this
-parser, so the exact JSON schema is genuinely unknown at build time.
+was NOT reachable from the sandboxed environment this engine has been
+built and iterated in (plain HTTP, non-443 port, raw IP — blocked by the
+build sandbox's egress policy, confirmed directly on more than one
+occasion, not assumed). The actual schema below was supplied by the user
+after inspecting the live endpoint directly and is handled by a dedicated
+adapter, `_adapter_oracle_realmarketapi` — but it still could not be
+independently verified from this sandbox, so the multi-adapter,
+never-fabricate fallback strategy below remains in place for any other
+shape (or a future breaking change to this one):
 
-Rather than hard-coding a single guessed schema and silently mis-parsing
-(or fabricating) data, this module:
+    {"schema_version": "1.0", "service": "pysgrid-forex",
+     "provider": "realmarketapi", "timeframe": "M5", "status": "ok",
+     "symbols": {
+         "XAUUSD": {
+             "symbol": "XAUUSD", "market_state": "open", "status": "ok",
+             "m5_valid": true,
+             "candles_5m": [{"timestamp": ..., "open": ..., "high": ...,
+                              "low": ..., "close": ..., "volume": ...,
+                              "bid": null, "ask": null}, ...]
+         }, ...
+     }}
+
+For anything else:
 
 1. Tries a small set of documented, structurally-reasonable adapters
    against whatever JSON the endpoint actually returns.
@@ -50,6 +66,15 @@ _SYMBOL_CONTAINER_KEYS = (
     "universe",
 )
 _CANDLE_LIST_KEYS = ("candles", "bars", "ohlc", "m5", "M5", "rates", "history", "data")
+
+# The PSYGRID RealMarketAPI feed's own M5 candle-list key, confirmed live at
+# http://140.245.226.102:8080/public/m5-live.json (provider="realmarketapi",
+# service="pysgrid-forex"). Kept separate from _CANDLE_LIST_KEYS so the
+# dedicated adapter below (_adapter_oracle_realmarketapi) is the one that
+# claims this exact shape and can apply its status/m5_valid gating —
+# rather than the generic symbol_keyed_container adapter picking it up
+# without that gating.
+_ORACLE_CANDLE_LIST_KEY = "candles_5m"
 
 
 @dataclass
@@ -203,6 +228,71 @@ def _build_parsed_symbol(symbol: str, raw_list: list[Any]) -> Optional[ParsedSym
 # ---------------------------------------------------------------------------
 
 
+def _adapter_oracle_realmarketapi(raw: Any) -> Optional[dict[str, ParsedSymbolData]]:
+    """Dedicated adapter for the confirmed live PSYGRID RealMarketAPI M5
+    feed schema:
+
+        {"schema_version": "1.0", "service": "pysgrid-forex",
+         "provider": "realmarketapi", "timeframe": "M5", "status": "ok",
+         "symbols": {
+             "XAUUSD": {
+                 "symbol": "XAUUSD", "market_state": "open", "status": "ok",
+                 "m5_valid": true,
+                 "candles_5m": [{"timestamp": ..., "open": ..., "high": ...,
+                                  "low": ..., "close": ..., "volume": ...,
+                                  "bid": null, "ask": null}, ...],
+             }, ...
+         }}
+
+    A per-symbol `status` other than "ok", or `m5_valid: false`, means the
+    provider itself is telling us that symbol's M5 history isn't
+    trustworthy right now — that symbol is skipped here (never parsed
+    anyway), not silently accepted. `bid`/`ask` aren't part of the
+    canonical OHLCV candle model and are ignored.
+
+    Returns `{}` (not `None`) when the shape is recognized but every
+    symbol ended up excluded (absent status/m5_valid, or truly empty
+    candle lists) — `parse_live_payload` treats that as a successful,
+    if empty, parse rather than falling through to SCHEMA_UNRECOGNIZED
+    for a payload it actually understood.
+    """
+    if not isinstance(raw, dict):
+        return None
+    symbols = raw.get("symbols")
+    if not isinstance(symbols, dict):
+        return None
+
+    recognized = False
+    out: dict[str, ParsedSymbolData] = {}
+    for container_key, payload in symbols.items():
+        if not isinstance(payload, dict) or _ORACLE_CANDLE_LIST_KEY not in payload:
+            continue
+        recognized = True
+
+        symbol_status = payload.get("status")
+        if symbol_status is not None and symbol_status != "ok":
+            continue
+        if payload.get("m5_valid") is False:
+            continue
+
+        candle_list = payload.get(_ORACLE_CANDLE_LIST_KEY)
+        if not isinstance(candle_list, list):
+            continue
+
+        symbol_name = payload.get("symbol") or container_key
+        parsed = _build_parsed_symbol(symbol_name, candle_list)
+        if parsed is None:
+            continue
+        # Preserve chronological ordering explicitly at the source, even
+        # though downstream validation also sorts/dedupes defensively.
+        parsed.records.sort(key=lambda r: r.time)
+        out[str(symbol_name).upper()] = parsed
+
+    if not recognized:
+        return None
+    return out
+
+
 def _adapter_symbol_keyed_container(raw: Any) -> Optional[dict[str, ParsedSymbolData]]:
     """{"symbols": {"EURUSD": {"candles": [...]}, ...}} or similar container key."""
     if not isinstance(raw, dict):
@@ -283,6 +373,7 @@ def _adapter_top_level_list_of_symbols(raw: Any) -> Optional[dict[str, ParsedSym
 
 
 _ADAPTERS: list[tuple[str, Callable[[Any], Optional[dict[str, ParsedSymbolData]]]]] = [
+    ("oracle_realmarketapi_v1", _adapter_oracle_realmarketapi),
     ("symbol_keyed_container", _adapter_symbol_keyed_container),
     ("symbol_keyed_list_container", _adapter_symbol_keyed_list_container),
     ("top_level_symbol_map", _adapter_top_level_symbol_map),
@@ -353,7 +444,12 @@ def parse_live_payload(raw: Any) -> ParseOutcome:
             result = adapter(raw)
         except Exception:  # defensive: a malformed shape must not crash parsing
             result = None
-        if result:
+        # `is not None` (not a truthiness check) so an adapter can signal
+        # "I recognized this shape but zero symbols survived" via `{}`
+        # rather than being treated the same as "shape not recognized".
+        # Existing adapters never return `{}` themselves (they use
+        # `out or None`), so this is a no-op for them.
+        if result is not None:
             return ParseOutcome(
                 ok=True,
                 adapter_used=name,

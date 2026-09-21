@@ -26,7 +26,7 @@ from psygnal.intelligence.cross_market import analyze_cross_market
 from psygnal.intelligence.gold import analyze_gold
 from psygnal.intelligence.regime import classify_regime
 from psygnal.macro.calendar import get_macro_state
-from psygnal.models import DataStatus, FinalSignal
+from psygnal.models import DataQuality, DataStatus, FinalSignal
 from psygnal.news.aggregator import get_news_state
 from psygnal.signal.confidence import compute_confidence
 from psygnal.signal.direction import select_direction
@@ -81,6 +81,27 @@ def run_engine(
         }
 
     ordered_symbols = list(dict.fromkeys(list(cfg.symbols) + list(parse_outcome.symbols.keys())))
+
+    intel_by_symbol: dict[str, dict[str, Any]] = {}
+    unavailable: dict[str, dict[str, Any]] = {}
+
+    # A symbol explicitly requested (via cfg.symbols) can be absent from
+    # parse_outcome.symbols for several honest reasons — it's simply not in
+    # this response, the provider flagged it non-ok/invalid, or every one
+    # of its candles was individually malformed. Whatever the reason, it
+    # must be reported as DATA UNAVAILABLE, never silently dropped from
+    # the output as if it had never been asked for.
+    missing_symbols = [s for s in ordered_symbols if s not in parse_outcome.symbols]
+    for sym in missing_symbols:
+        unavailable[sym] = DataQuality(
+            status=DataStatus.UNAVAILABLE,
+            symbol=sym,
+            candles_available=0,
+            candles_required=cfg.min_candles_required,
+            freshness_seconds=None,
+            issues=["symbol not present in the live payload's parsed symbol set"],
+        ).as_dict()
+
     ordered_symbols = [s for s in ordered_symbols if s in parse_outcome.symbols]
 
     validated: dict[str, tuple[list, Any]] = {}
@@ -93,9 +114,6 @@ def run_engine(
             max_staleness_minutes=cfg.max_staleness_minutes,
         )
         validated[sym] = (candles, quality)
-
-    intel_by_symbol: dict[str, dict[str, Any]] = {}
-    unavailable: dict[str, dict[str, Any]] = {}
 
     for sym, (candles, quality) in validated.items():
         if quality.status == DataStatus.UNAVAILABLE:
