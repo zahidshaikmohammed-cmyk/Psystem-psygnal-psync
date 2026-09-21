@@ -4,7 +4,7 @@ and an expected-movement estimate for the 60-minute forecast horizon."""
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np

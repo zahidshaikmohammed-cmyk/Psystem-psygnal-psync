@@ -19,7 +19,7 @@ from psygnal.forecasting.backtest import run_walk_forward_backtest
 from psygnal.forecasting.dataset import build_training_dataset
 from psygnal.forecasting.features import build_feature_frame
 from psygnal.forecasting.pattern_memory import PatternMemoryStore
-from psygnal.intelligence.structure import classify_trend_structure, find_swings
+from psygnal.intelligence.structure import find_swings
 from psygnal.models import candles_to_frame
 from tests.conftest import make_m5_series
 
@@ -75,7 +75,6 @@ def test_confirmed_structure_ignores_unconfirmed_future_swings():
 
     # Full-series structure classification at the very end.
     full_highs, full_lows = find_swings(df, lookback=2)
-    full_label = classify_trend_structure(full_highs, full_lows)
 
     # Truncate 1 bar before the end: any swing that only the full series
     # could confirm (because it needed that last bar) must disappear.

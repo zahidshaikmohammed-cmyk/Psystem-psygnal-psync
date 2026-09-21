@@ -14,8 +14,6 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Optional
 
-import pandas as pd
-
 from psygnal import config
 from psygnal.intelligence.candle_features import compute_candle_features
 from psygnal.intelligence.liquidity import analyze_liquidity

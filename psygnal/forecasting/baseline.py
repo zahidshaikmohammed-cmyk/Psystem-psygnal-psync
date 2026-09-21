@@ -21,7 +21,7 @@ import pandas as pd
 from sklearn.ensemble import HistGradientBoostingClassifier, RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import TimeSeriesSplit
-from sklearn.metrics import balanced_accuracy_score, brier_score_loss, f1_score, precision_score, recall_score, roc_auc_score
+from sklearn.metrics import balanced_accuracy_score, brier_score_loss
 
 from psygnal import config
 

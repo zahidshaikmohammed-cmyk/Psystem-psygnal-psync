@@ -16,7 +16,7 @@ from psygnal import config
 from psygnal.indicators.atr import atr
 from psygnal.forecasting.features import build_feature_frame
 from psygnal.forecasting.labels import build_forward_labels
-from psygnal.models import Candle, candles_to_frame
+from psygnal.models import Candle
 
 
 def list_available_historical_files(historical_dir: Path = config.HISTORICAL_DIR) -> list[Path]:

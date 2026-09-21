@@ -37,7 +37,6 @@ def classify_regime(
     price_action = symbol_intel["price_action"]
     structures = symbol_intel["structures"]
     trends = symbol_intel["trends"]
-    momentum = symbol_intel["momentum"]
 
     m5_structure = structures.get("M5")
     ref_trend = trends.get(reference_trend_timeframe) or trends.get("M5")

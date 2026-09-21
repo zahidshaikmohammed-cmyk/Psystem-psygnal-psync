@@ -9,7 +9,7 @@ for the ensemble/score, never a hard gate.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any, Optional
 
 from psygnal.data.parser import coerce_time

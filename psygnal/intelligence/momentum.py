@@ -9,7 +9,7 @@ whether trend *strength* itself is accelerating or decelerating.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np

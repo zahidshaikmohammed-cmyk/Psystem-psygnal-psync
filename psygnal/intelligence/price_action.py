@@ -7,10 +7,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-import numpy as np
 import pandas as pd
 
-from psygnal.intelligence.sequence import WindowSequenceStats, compute_all_window_stats
+from psygnal.intelligence.sequence import compute_all_window_stats
 
 
 @dataclass

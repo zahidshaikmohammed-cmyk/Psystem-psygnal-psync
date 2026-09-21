@@ -6,10 +6,8 @@ import pytest
 
 from psygnal.data.aggregation import build_multi_timeframe_series
 from psygnal.forecasting.ensemble import combine_forecasts, compute_deterministic_probabilities
-from psygnal.indicators.atr import atr
 from psygnal.intelligence.context import build_symbol_intelligence
 from psygnal.intelligence.regime import classify_regime
-from psygnal.models import candles_to_frame
 from psygnal.signal.confidence import compute_confidence
 from psygnal.signal.direction import select_direction
 from psygnal.signal.entry import compute_entry
@@ -38,12 +36,6 @@ def test_entry_stop_targets_pipeline_for_uptrend():
     intel, now = _build_intel(direction=1, step=0.3)
     current_price = intel["current_price"]
     m5 = intel["structures"]["M5"]
-
-    atr_series = atr(
-        candles_to_frame(make_m5_series(500, step=0.3))["high"],
-        candles_to_frame(make_m5_series(500, step=0.3))["low"],
-        candles_to_frame(make_m5_series(500, step=0.3))["close"],
-    )
     atr_value = intel["volatility"].atr_value
 
     entry_plan = compute_entry("LONG", current_price, atr_value, intel["liquidity"])

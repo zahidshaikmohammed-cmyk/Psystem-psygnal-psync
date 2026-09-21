@@ -351,7 +351,7 @@ def parse_live_payload(raw: Any) -> ParseOutcome:
     for name, adapter in _ADAPTERS:
         try:
             result = adapter(raw)
-        except Exception as exc:  # defensive: a malformed shape must not crash parsing
+        except Exception:  # defensive: a malformed shape must not crash parsing
             result = None
         if result:
             return ParseOutcome(
