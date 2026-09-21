@@ -107,6 +107,13 @@ def _coerce_time(value: Any) -> Optional[datetime]:
     return None
 
 
+def coerce_time(value: Any) -> Optional[datetime]:
+    """Public wrapper around the timestamp-coercion heuristic, reused by the
+    macro/news adapters so timestamp parsing logic lives in exactly one
+    place."""
+    return _coerce_time(value)
+
+
 def _first_present(d: dict[str, Any], keys: tuple[str, ...]) -> Any:
     for k in keys:
         if k in d and d[k] is not None:
