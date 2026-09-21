@@ -14,7 +14,9 @@ dataset; it never returns a match at or after `max_index`.
 
 from __future__ import annotations
 
+import pickle
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Optional
 
 import numpy as np
@@ -102,3 +104,16 @@ class PatternMemoryStore:
             "mean_forward_return": float(np.nanmean(neighbor_returns)),
             "mean_distance": float(np.mean(distances)) if len(distances) else None,
         }
+
+    def save(self, path: Path) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("wb") as f:
+            pickle.dump(self, f)
+
+    @classmethod
+    def load(cls, path: Path) -> "PatternMemoryStore":
+        with path.open("rb") as f:
+            instance = pickle.load(f)
+        if not isinstance(instance, cls):
+            raise TypeError(f"{path} does not contain a {cls.__name__} artifact")
+        return instance

@@ -136,6 +136,20 @@ def compute_deterministic_probabilities(
     }
 
 
+def determine_forecast_engine_label(sources_used: list[str]) -> str:
+    """DETERMINISTIC when nothing learned contributed; TRAINED_ML when a
+    real trained baseline model contributed (with or without a plain
+    deterministic floor); ENSEMBLE when pattern-memory (a second,
+    independent historical signal) also contributes alongside it."""
+    has_baseline = "baseline_model" in sources_used
+    has_pattern = "pattern_memory" in sources_used
+    if not has_baseline and not has_pattern:
+        return "DETERMINISTIC"
+    if has_pattern:
+        return "ENSEMBLE"
+    return "TRAINED_ML"
+
+
 def combine_forecasts(
     deterministic: dict[str, Any],
     baseline_probs: Optional[dict[str, float]] = None,
@@ -171,10 +185,12 @@ def combine_forecasts(
     total = sum(blended.values()) or 1.0
     blended = {k: v / total for k, v in blended.items()}
 
+    sources_used = [name for name, _, _ in sources]
     return {
         "probability_long": blended["UP"],
         "probability_short": blended["DOWN"],
         "probability_neutral": blended["NEUTRAL"],
-        "sources_used": [name for name, _, _ in sources],
+        "sources_used": sources_used,
+        "forecast_engine": determine_forecast_engine_label(sources_used),
         "deterministic_detail": deterministic,
     }

@@ -9,6 +9,8 @@ dist/
 .ruff_cache/
 .mypy_cache/
 data/cache/
+data/output/
+data/models/
 data/historical/*
 !data/historical/.gitkeep
 *.log

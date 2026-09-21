@@ -53,6 +53,7 @@ def format_data_unavailable(symbol: str, quality: dict[str, Any]) -> str:
 
 def format_symbol_report(signal: FinalSignal, symbol_intel: dict[str, Any]) -> str:
     precision = 3 if signal.current_price >= 100 else 5
+    det = signal.deterministic_forecast
     lines = [
         BAR,
         signal.symbol,
@@ -61,14 +62,42 @@ def format_symbol_report(signal: FinalSignal, symbol_intel: dict[str, Any]) -> s
         "DIRECTION:",
         signal.direction,
         "",
-        "LONG PROBABILITY:",
-        f"{signal.probability_long * 100:.0f}%",
+        "FORECAST ENGINE:",
+        signal.forecast_engine,
         "",
-        "SHORT PROBABILITY:",
-        f"{signal.probability_short * 100:.0f}%",
+        "MODEL STATUS:",
+        signal.model_status,
         "",
-        "NEUTRAL:",
-        f"{signal.probability_neutral * 100:.0f}%",
+        THIN,
+        "DETERMINISTIC FORECAST (rule-based intelligence composite — NOT a",
+        "historically validated statistic, see constitution rule #19)",
+        THIN,
+        f"  LONG: {det['long'] * 100:.0f}%   SHORT: {det['short'] * 100:.0f}%   NEUTRAL: {det['neutral'] * 100:.0f}%",
+        "",
+    ]
+    if signal.model_probability is not None:
+        mp = signal.model_probability
+        calib_note = "calibrated" if mp.get("calibrated") else "UNCALIBRATED (too little validation data)"
+        lines += [
+            THIN,
+            f"MODEL PROBABILITY ({mp.get('model_name')}, {calib_note})",
+            THIN,
+            f"  LONG: {mp['long'] * 100:.0f}%   SHORT: {mp['short'] * 100:.0f}%   NEUTRAL: {mp['neutral'] * 100:.0f}%",
+            f"  calibration status: {signal.calibration_state.get('status')}",
+            "",
+        ]
+    else:
+        lines += [
+            THIN,
+            "MODEL PROBABILITY: N/A (no trained model for this symbol)",
+            THIN,
+            "",
+        ]
+    lines += [
+        THIN,
+        "OPERATIONAL FORECAST (blended; used for direction/entry/score below)",
+        THIN,
+        f"  LONG: {signal.probability_long * 100:.0f}%   SHORT: {signal.probability_short * 100:.0f}%   NEUTRAL: {signal.probability_neutral * 100:.0f}%",
         "",
         "CONFIDENCE:",
         signal.confidence,
@@ -77,7 +106,7 @@ def format_symbol_report(signal: FinalSignal, symbol_intel: dict[str, Any]) -> s
         f"{signal.confidence_score:.0f}/100",
         "",
         "SIGNAL SCORE:",
-        f"{signal.signal_score:.0f}/100",
+        f"{signal.signal_score:.0f}/100  (scoring_mode: {signal.scoring_mode})",
         "",
         "REGIME:",
         signal.market_regime,
@@ -101,7 +130,8 @@ def format_symbol_report(signal: FinalSignal, symbol_intel: dict[str, Any]) -> s
         _fmt(signal.tp2, precision),
         "",
         "EXPECTED 60M RANGE:",
-        f"{_fmt(signal.expected_60m_low, precision)} — {_fmt(signal.expected_60m_high, precision)}",
+        f"{_fmt(signal.expected_60m_low, precision)} — {_fmt(signal.expected_60m_high, precision)}"
+        f"  [{signal.expected_range_methodology}]",
         "",
         "EXPECTED 60M RETURN:",
         f"{signal.expected_60m_return * 100:+.2f}%",
@@ -187,7 +217,7 @@ def format_symbol_report(signal: FinalSignal, symbol_intel: dict[str, Any]) -> s
 def format_market_summary(signals: list[FinalSignal]) -> str:
     lines = [BAR, "MARKET SUMMARY", BAR, ""]
     for s in signals:
-        lines.append(f"{s.symbol:<8} {s.direction:<6} {s.signal_score:>5.0f}/100")
+        lines.append(f"{s.symbol:<8} {s.direction:<6} {s.signal_score:>5.0f}/100   [{s.forecast_engine}/{s.model_status}]")
     lines += [
         "",
         "This is informational output from a forecasting engine, not a",

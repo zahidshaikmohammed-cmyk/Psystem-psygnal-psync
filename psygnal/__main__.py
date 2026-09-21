@@ -15,6 +15,7 @@ from pathlib import Path
 from psygnal import config
 from psygnal.data.live_client import fetch_live_m5
 from psygnal.data.parser import describe_schema
+from psygnal.forecasting.registry import load_available_models
 from psygnal.main import run_engine
 from psygnal.reporting.json import build_json_output, default_output_path, write_json_output
 from psygnal.reporting.terminal import (
@@ -32,12 +33,26 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--inspect-schema", action="store_true", help="Fetch the live payload and print its structure, then exit")
     parser.add_argument("--no-macro", action="store_true", help="Disable the macro-calendar adapter")
     parser.add_argument("--no-news", action="store_true", help="Disable the news adapter")
+    parser.add_argument("--no-models", action="store_true", help="Ignore any trained models under data/models/ and force deterministic mode")
+    parser.add_argument("--model-dir", type=str, default=str(config.MODEL_DIR), help="Directory to load trained models from")
     parser.add_argument("--json-only", action="store_true", help="Print JSON to stdout instead of the terminal report")
     parser.add_argument("--output-dir", type=str, default=str(config.CACHE_DIR.parent / "output"), help="Directory for the JSON output file")
+    parser.add_argument("--train", action="store_true", help="Train a model instead of running live (see: python -m psygnal.train --help)")
     return parser
 
 
+def _run_train(argv: list[str] | None) -> int:
+    from psygnal.train import main as train_main
+
+    # Strip --train itself out before delegating the remaining args.
+    forwarded = [a for a in (argv if argv is not None else sys.argv[1:]) if a != "--train"]
+    return train_main(forwarded)
+
+
 def main(argv: list[str] | None = None) -> int:
+    if (argv is not None and "--train" in argv) or (argv is None and "--train" in sys.argv[1:]):
+        return _run_train(argv)
+
     args = build_arg_parser().parse_args(argv)
 
     fetch_result = fetch_live_m5(url=args.endpoint)
@@ -59,10 +74,26 @@ def main(argv: list[str] | None = None) -> int:
         symbols=symbols,
         enable_macro=not args.no_macro,
         enable_news=not args.no_news,
+        model_dir=Path(args.model_dir),
+        enable_models=not args.no_models,
     )
 
+    baseline_models: dict = {}
+    pattern_memory_stores: dict = {}
+    if not args.no_models:
+        # Never crashes: a missing data/models/ directory, a missing
+        # per-symbol artifact, or a corrupt pickle all just mean that
+        # symbol runs in deterministic mode.
+        baseline_models, pattern_memory_stores, _model_meta = load_available_models(symbols, model_dir=Path(args.model_dir))
+
     now_utc = datetime.now(timezone.utc)
-    outcome = run_engine(fetch_result.raw, cfg=cfg, now_utc=now_utc)
+    outcome = run_engine(
+        fetch_result.raw,
+        cfg=cfg,
+        now_utc=now_utc,
+        baseline_models=baseline_models,
+        pattern_memory_stores=pattern_memory_stores,
+    )
 
     if outcome["status"] == "SCHEMA_UNRECOGNIZED":
         print("=" * 60)

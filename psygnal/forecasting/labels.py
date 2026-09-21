@@ -62,6 +62,8 @@ def build_forward_labels(
             "label": label,
             "mfe": mfe,
             "mae": mae,
+            "atr_at_t": atr_at_t,
+            "close_at_t": close,
         },
         index=df_m5.index,
     )

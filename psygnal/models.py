@@ -177,10 +177,27 @@ class FinalSignal:
     probability_short: float
     probability_neutral: float
 
+    # --- V2: three distinct concepts, never mixed (see signal/README notes) ---
+    # A. SIGNAL SCORE (quality/confluence) — `signal_score` below.
+    # B. MODEL PROBABILITY — only populated once a genuine trained model
+    #    contributed; `probability_long/short/neutral` above remain the
+    #    *operational* blended forecast used for direction/entry/etc, which
+    #    may be purely deterministic. `deterministic_forecast` and
+    #    `model_probability` disaggregate the two so neither is mistaken
+    #    for a historically validated statistic when it isn't one.
+    # C. CONFIDENCE — how strongly available information supports the
+    #    forecast; `confidence`/`confidence_score` below.
+    forecast_engine: str  # "DETERMINISTIC" | "TRAINED_ML" | "ENSEMBLE"
+    model_status: str  # "TRAINED" | "UNTRAINED"
+    deterministic_forecast: dict[str, float]
+    model_probability: Optional[dict[str, Any]]
+    calibration_state: dict[str, Any]
+
     confidence: str
     confidence_score: float
 
     signal_score: float
+    scoring_mode: str  # "EXPERT_WEIGHTED" | "HISTORICALLY_CALIBRATED"
 
     current_price: float
     entry: float
@@ -194,6 +211,7 @@ class FinalSignal:
     expected_60m_high: float
     expected_60m_low: float
     expected_60m_range: float
+    expected_range_methodology: str  # "SYMMETRIC_ATR_V1" | "HISTORICAL_MFE_MAE"
 
     rr: Optional[float]
 

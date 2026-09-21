@@ -38,9 +38,17 @@ Requires Python 3.12+.
 python -m psygnal --symbols XAUUSD,EURUSD,GBPUSD   # restrict the universe
 python -m psygnal --inspect-schema                  # dump the live payload's structure and exit
 python -m psygnal --no-macro --no-news              # skip the optional secondary sources
+python -m psygnal --no-models                       # ignore data/models/, force deterministic mode
+python -m psygnal --model-dir ./my-models           # load trained models from a non-default directory
 python -m psygnal --json-only                       # print JSON to stdout instead of the report
 python -m psygnal --output-dir ./my-logs
 ```
+
+If `data/models/` contains a trained artifact for a symbol (see
+**Training a model** below), `python -m psygnal` picks it up
+automatically — no flag needed. A missing directory, a missing
+per-symbol file, or a corrupted pickle all degrade to deterministic mode
+for that symbol rather than crashing the run.
 
 ## ⚠️ Important: live schema calibration
 
@@ -87,7 +95,8 @@ complete signal without them, just with reduced context.
 
 ```
 psygnal/
-├── __main__.py          CLI entry point (all I/O lives here)
+├── __main__.py          CLI entry point (all I/O lives here); --train delegates to train.py
+├── train.py              training CLI entry point: python -m psygnal.train
 ├── main.py               pure orchestration: raw payload -> FinalSignal[]
 ├── config.py              tunable parameters, universe, endpoints (no secrets)
 ├── models.py              shared dataclasses (Candle, FinalSignal, ...)
@@ -100,12 +109,15 @@ psygnal/
 ├── macro/                  free public economic calendar adapter
 ├── news/                   free GDELT news adapter
 ├── forecasting/            leakage-free features/labels, historical dataset builder,
-│                           baseline ML models, pattern-similarity memory, ensemble
+│                           baseline ML models + calibration, pattern-similarity memory,
+│                           ensemble, walk-forward backtest, train_pipeline, score
+│                           calibration, model registry (auto-load from data/models/)
 ├── signal/                 direction, entry, stop, targets, score, confidence, explanation
 └── reporting/               terminal report + JSON output
 
-tests/                      119 tests: formulas vs hand-computed references, behavioural
-                            classification, leakage guarantees, end-to-end integration
+tests/                      167 tests: formulas vs hand-computed references, behavioural
+                            classification, leakage guarantees, end-to-end integration,
+                            training pipeline / calibration / model registry (V2)
 ```
 
 ## What "intelligence" means here
@@ -142,37 +154,95 @@ into one momentum score; the four EMAs into one alignment score) before
 they enter any weighted combination, so near-duplicate signals don't get
 counted as independent confirmations.
 
-## Historical data, training, and backtesting
+## Two forecast modes: DETERMINISTIC vs TRAINED_ML / ENSEMBLE
 
-No historical data ships with this repository — none was fabricated. The
-forecasting layer runs a fully honest **deterministic mode** until real
-history is supplied:
+Every signal reports three things that are easy to conflate but are kept
+strictly separate everywhere in the code, the terminal report, and the
+JSON output:
+
+- **`signal_score`** — a transparent, weighted quality/confluence score
+  (`psygnal/signal/score.py`). Never a probability.
+- **`model_probability`** — a genuine statistical estimate from a
+  *trained* model, present only when one exists (`model_status ==
+  "TRAINED"`) and calibrated on data it never trained on. `None`
+  otherwise — never backfilled with a rule-based guess dressed up as a
+  probability.
+- **`confidence`** / **`confidence_score`** — how strongly the available
+  evidence supports the forecast (probability separation, model
+  agreement, data completeness, regime clarity). Not an outcome
+  guarantee.
+
+`deterministic_forecast` (always present) and `probability_long/short`
+(the *operational*, blended forecast actually used for direction/entry)
+are reported alongside so a purely rule-based call is never mistaken for
+a validated one. `forecast_engine` names which regime produced the
+operational forecast:
+
+| `forecast_engine` | Means |
+|---|---|
+| `DETERMINISTIC` | No trained model for this symbol; rule-based intelligence composite only. |
+| `TRAINED_ML` | A trained baseline model contributed. |
+| `ENSEMBLE` | The trained model **and** historical pattern-memory both contributed. |
+
+Until you train a model (see below), every symbol runs in
+`DETERMINISTIC` / `model_status: UNTRAINED` mode — that is the honest,
+correct state for a fresh clone with no historical data, and the engine
+says so explicitly in its `warnings`.
+
+## Training a model (PSYGNAL V2)
+
+No historical data ships with this repository — none was fabricated.
+Supply genuine historical M5 OHLCV data:
 
 ```
-data/historical/your_file.csv   (or .json / .parquet)
+data/historical/XAUUSD.csv   (or .json / .parquet)
 ```
 
-Expected columns: `time, open, high, low, close[, volume]`. Then, from
-Python:
+Expected columns: `time, open, high, low, close[, volume]`. Then:
 
-```python
-from psygnal.forecasting.dataset import load_historical_candles, build_training_dataset
-from psygnal.forecasting.backtest import run_walk_forward_backtest
-from psygnal.models import candles_to_frame
-
-candles = load_historical_candles(Path("data/historical/your_file.csv"))
-df = candles_to_frame(candles)
-report = run_walk_forward_backtest(df)   # trains on an early slice, evaluates on a later disjoint slice
+```bash
+python -m psygnal.train --symbol XAUUSD
+# or equivalently:
+python -m psygnal --train --symbol XAUUSD --file data/historical/XAUUSD.csv
 ```
 
-`forecasting/baseline.py` offers Logistic Regression, Random Forest, and
-HistGradientBoosting; `forecasting/pattern_memory.py` does leakage-safe
-k-NN lookup against historical states; `forecasting/ensemble.py` blends
-whichever of these are actually available with the deterministic estimate
-— it never blocks on a missing model, and it never claims a learned
-probability before a model has been trained and validated
-out-of-sample. `MIN_HISTORICAL_SAMPLES_FOR_TRAINING` (`config.py`) gates
-when the baseline model is even attempted.
+This runs the full pipeline — **using the exact same causal
+feature-engineering function (`forecasting/features.py`) live mode
+uses**, so training and inference can never silently diverge:
+
+```
+historical M5
+    -> causal features (forecasting/features.py — same function as live)
+    -> 12-candle future labels, ATR-normalized (forecasting/labels.py)
+    -> chronological train / calibration / test split — NEVER shuffled
+    -> Logistic Regression vs Random Forest vs HistGradientBoosting,
+       selected by OUT-OF-SAMPLE (calibration-slice) balanced accuracy —
+       never in-sample training accuracy
+    -> probability calibration (isotonic) on the calibration slice
+    -> final walk-forward evaluation on a fully held-out test slice
+       (balanced accuracy, precision/recall/F1, ROC-AUC, Brier score,
+       confusion matrix, reliability curve, R-multiple stats)
+    -> data/models/<SYMBOL>_model.pkl
+    -> data/models/<SYMBOL>_pattern_memory.pkl
+    -> data/models/<SYMBOL>_score_weights.json (optional — see below)
+```
+
+`python -m psygnal` then picks these artifacts up automatically on the
+next run. The training CLI prints the candidate comparison table, the
+selected model, calibration status, the held-out test metrics, and the
+confusion matrix — and ends with an explicit reminder that these numbers
+describe out-of-sample statistical performance on your dataset, not a
+claim of trading profitability.
+
+The (optional) `*_score_weights.json` artifact lets `signal_score`
+reallocate part of its weight mass toward whichever evidence categories
+historically correlated with favorable outcomes for that symbol
+(`scoring_mode: HISTORICALLY_CALIBRATED` instead of the default
+`EXPERT_WEIGHTED`) — see `forecasting/score_calibration.py` for exactly
+which categories this covers and its documented limitations.
+
+`forecasting/backtest.py::run_walk_forward_backtest` remains available
+directly for ad-hoc single-split evaluation without writing artifacts.
 
 ## Testing
 
@@ -181,7 +251,7 @@ pip install -r requirements.txt
 pytest -q
 ```
 
-119 tests cover: adaptive parsing against multiple synthetic payload
+167 tests cover: adaptive parsing against multiple synthetic payload
 shapes, data-integrity validation, M5→M15/M30/H1/H4 aggregation
 correctness, every indicator formula against hand-computed reference
 values, candle/sequence/price-action classification, structure/liquidity/
@@ -189,9 +259,14 @@ session/trend/momentum/volatility/volume engines, cross-market/USD
 composite/Gold intelligence, macro/news adapters (mocked HTTP layer),
 regime classification, leakage-free feature engineering (explicit
 truncation-invariance tests), forecasting models, walk-forward
-backtesting, the full signal engine, and an end-to-end integration test
-that runs the entire pipeline against a synthetic payload and renders
-both the terminal report and JSON output.
+backtesting, the full signal engine, an end-to-end integration test that
+runs the entire pipeline against a synthetic payload and renders both the
+terminal report and JSON output, plus (V2) the training pipeline
+(chronological no-shuffle split, out-of-sample model selection,
+calibration, artifact save/load), the model registry (trained/untrained/
+corrupt-artifact fallback, never crashes), forecast-engine mode reporting
+(DETERMINISTIC/TRAINED_ML/ENSEMBLE), the training and `--train` CLIs, and
+the volatility/price-action-aware entry/stop/target upgrades.
 
 `tests/test_leakage.py` is the dedicated future-leakage suite the
 constitution calls for; further leakage checks live next to the code they
@@ -214,3 +289,10 @@ candle boundary).
 - Every signal reports its `conflicts` and `warnings` alongside its
   `reasons`, and every reason is traced to a concrete computed value
   (`psygnal/signal/explain.py`), not templated boilerplate.
+- `model_probability` is `None` — not a fabricated number — whenever
+  `model_status == "UNTRAINED"`. A rule-based `deterministic_forecast` is
+  never relabeled as a "model probability" anywhere in the codebase.
+- Training model-selection and calibration always read from a slice the
+  model was never fit on; final reported metrics come from a third slice
+  neither selection nor calibration ever touched
+  (`forecasting/train_pipeline.py`).

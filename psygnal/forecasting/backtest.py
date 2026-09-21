@@ -85,6 +85,39 @@ def evaluate_predictions(
     metrics["mean_mfe"] = float(np.nanmean(meta_test["mfe"])) if "mfe" in meta_test else None
     metrics["mean_mae"] = float(np.nanmean(meta_test["mae"])) if "mae" in meta_test else None
 
+    # Direction-conditioned, ATR-normalized favorable/adverse excursion —
+    # "if a trade were taken in the direction this model actually called,
+    # how far did price move for and against it, historically?" Unlike
+    # `mean_mfe`/`mean_mae` above (conditioned on the *realized label*),
+    # this is conditioned on the *prediction*, which is what a live signal
+    # can actually act on, and is what feeds the asymmetric expected-range
+    # estimate and target sizing (see forecasting/expected_range.py,
+    # signal/targets.py).
+    if {"forward_high", "forward_low", "atr_at_t", "close_at_t"}.issubset(meta_test.columns):
+        forward_high = meta_test["forward_high"].to_numpy()
+        forward_low = meta_test["forward_low"].to_numpy()
+        atr_at_t = meta_test["atr_at_t"].to_numpy()
+        close_at_t = meta_test["close_at_t"].to_numpy()
+        safe_atr = np.where(atr_at_t == 0, np.nan, atr_at_t)
+
+        mfe_atr = np.full(len(y_pred_arr), np.nan)
+        mae_atr = np.full(len(y_pred_arr), np.nan)
+        up_mask = trade_mask & (y_pred_arr == "UP")
+        down_mask = trade_mask & (y_pred_arr == "DOWN")
+
+        mfe_atr[up_mask] = (forward_high[up_mask] - close_at_t[up_mask]) / safe_atr[up_mask]
+        mae_atr[up_mask] = (close_at_t[up_mask] - forward_low[up_mask]) / safe_atr[up_mask]
+        mfe_atr[down_mask] = (close_at_t[down_mask] - forward_low[down_mask]) / safe_atr[down_mask]
+        mae_atr[down_mask] = (forward_high[down_mask] - close_at_t[down_mask]) / safe_atr[down_mask]
+
+        valid_mfe = mfe_atr[~np.isnan(mfe_atr)]
+        valid_mae = mae_atr[~np.isnan(mae_atr)]
+        metrics["mean_mfe_atr"] = float(np.mean(valid_mfe)) if len(valid_mfe) else None
+        metrics["mean_mae_atr"] = float(np.mean(valid_mae)) if len(valid_mae) else None
+    else:
+        metrics["mean_mfe_atr"] = None
+        metrics["mean_mae_atr"] = None
+
     return metrics
 
 

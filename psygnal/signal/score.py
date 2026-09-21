@@ -53,7 +53,16 @@ def compute_signal_score(
     session_label: str,
     macro_status: str,
     rr: Optional[float],
+    learned_weights: Optional[dict[str, float]] = None,
 ) -> dict[str, Any]:
+    """`learned_weights`, when provided (see forecasting/score_calibration.py),
+    must be a full 13-key weight dict summing to 1.0 — pass it only when it
+    was actually derived from this symbol's own historical data. Absent
+    that, the fixed V1 "expert" weights are used and `scoring_mode` is
+    reported as EXPERT_WEIGHTED rather than implying an empirical fit that
+    didn't happen."""
+    weights = learned_weights if learned_weights is not None else SCORE_WEIGHTS
+    scoring_mode = "HISTORICALLY_CALIBRATED" if learned_weights is not None else "EXPERT_WEIGHTED"
     prob_long = ensemble_result["probability_long"]
     prob_short = ensemble_result["probability_short"]
     forecast_strength = _clip01(abs(prob_long - prob_short) * 2)
@@ -110,5 +119,10 @@ def compute_signal_score(
         "risk_reward": risk_reward_score,
     }
 
-    score = sum(sub_scores[k] * SCORE_WEIGHTS[k] for k in SCORE_WEIGHTS) * 100.0
-    return {"signal_score": round(float(score), 2), "sub_scores": sub_scores}
+    score = sum(sub_scores[k] * weights.get(k, SCORE_WEIGHTS[k]) for k in SCORE_WEIGHTS) * 100.0
+    return {
+        "signal_score": round(float(score), 2),
+        "sub_scores": sub_scores,
+        "scoring_mode": scoring_mode,
+        "weights_used": weights,
+    }

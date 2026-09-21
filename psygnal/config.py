@@ -177,5 +177,7 @@ class EngineConfig:
     max_staleness_minutes: int = MAX_DATA_STALENESS_MINUTES
     min_candles_required: int = MIN_M5_CANDLES_REQUIRED
     historical_dir: Path = field(default_factory=lambda: HISTORICAL_DIR)
+    model_dir: Path = field(default_factory=lambda: MODEL_DIR)
     enable_macro: bool = True
     enable_news: bool = True
+    enable_models: bool = True
